@@ -1,0 +1,65 @@
+# 中继部署工作流 - 由 GameBox 系统生成
+# Action 仓库可为 Public 完全免费，代码仓库保持私有
+name: 中继部署到 Cloudflare Workers
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_command:
+        description: '构建命令（触发时由系统自动传入）'
+        required: false
+        default: 'pnpm run build'
+      worker_name:
+        description: 'Worker 名称（留空则使用 wrangler.toml 配置）'
+        required: false
+      git_repo_url:
+        description: '代码仓库 URL（如 https://github.com/owner/my-site）'
+        required: true
+      git_branch:
+        description: '代码分支（触发时由系统自动传入）'
+        required: false
+        default: 'main'
+
+jobs:
+  deploy:
+    name: 拉取代码并部署到 Cloudflare Workers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 拉取代码仓库
+        run: |
+          REPO_URL=${{ inputs.git_repo_url }}
+          AUTH_URL=${REPO_URL/https:\/\//https:\/\/x-token:${{ secrets.GIT_ACCESS_TOKEN }}@}
+          git clone --depth 1 --branch "${{ inputs.git_branch || 'main' }}" "$AUTH_URL" code-repo
+
+      - name: 安装 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+          cache-dependency-path: code-repo/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: code-repo
+        run: pnpm install
+
+      - name: 构建项目
+        working-directory: code-repo
+        run: ${{ inputs.build_command || 'pnpm run build' }}
+
+      - name: 部署到 Cloudflare
+        working-directory: code-repo
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "${{ inputs.worker_name }}" ]; then
+            npx wrangler deploy --name "${{ inputs.worker_name }}"
+          else
+            npx wrangler deploy
+          fi
